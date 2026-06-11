@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import db from '../db';
 import { authMiddleware, AuthRequest } from '../middleware/auth';
+import { generateSmartBox } from '../boxGenerator';
 
 const router = Router();
 
@@ -103,8 +104,7 @@ router.post('/:id/pay', authMiddleware, (req: AuthRequest, res) => {
     'UPDATE orders SET subscription_id = ? WHERE id = ?'
   ).run(subscriptionId, id);
 
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user!.id) as any;
-  generateFirstBox(subscriptionId, req.user!.id, plan.snacks_count, user);
+  generateSmartBox(subscriptionId, req.user!.id, plan.snacks_count);
 
   res.json({
     success: true,
@@ -113,45 +113,5 @@ router.post('/:id/pay', authMiddleware, (req: AuthRequest, res) => {
     status: 'paid'
   });
 });
-
-function generateFirstBox(subscriptionId: string, userId: string, snacksCount: number, user: any) {
-  const now = new Date();
-  const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-  const boxId = uuidv4();
-  const months = ['一月', '二月', '三月', '四月', '五月', '六月', '七月', '八月', '九月', '十月', '十一月', '十二月'];
-
-  db.prepare(`
-    INSERT INTO boxes (id, subscription_id, user_id, month, year, status)
-    VALUES (?, ?, ?, ?, ?, 'pending')
-  `).run(
-    boxId,
-    subscriptionId,
-    userId,
-    months[nextMonth.getMonth()],
-    nextMonth.getFullYear()
-  );
-
-  let snacks = db.prepare(`
-    SELECT * FROM snacks 
-    WHERE 1=1
-    ${user?.nut_allergy ? 'AND contains_nuts = 0' : ''}
-    ORDER BY RANDOM()
-    LIMIT ?
-  `).all(snacksCount) as any[];
-
-  if (snacks.length < snacksCount) {
-    snacks = db.prepare('SELECT * FROM snacks ORDER BY RANDOM() LIMIT ?').all(snacksCount) as any[];
-  }
-
-  const insertBoxSnack = db.prepare(
-    'INSERT INTO box_snacks (id, box_id, snack_id, quantity) VALUES (?, ?, ?, 1)'
-  );
-
-  snacks.forEach(snack => {
-    insertBoxSnack.run(uuidv4(), boxId, snack.id);
-  });
-
-  return boxId;
-}
 
 export default router;

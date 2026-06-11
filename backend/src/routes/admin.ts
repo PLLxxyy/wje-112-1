@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import db from '../db';
 import { authMiddleware, adminMiddleware, AuthRequest } from '../middleware/auth';
+import { generateSmartBox } from '../boxGenerator';
 
 const router = Router();
 
@@ -258,6 +259,32 @@ router.post('/boxes/:id/ship', (req: AuthRequest, res) => {
     SET status = 'shipped', shipped_at = ?, tracking_number = ?, logistics_company = ?
     WHERE id = ?
   `).run(shippedAt, tracking_number || '', logistics_company || '顺丰速运', id);
+
+  const subscription = db.prepare(
+    "SELECT * FROM subscriptions WHERE id = ? AND status = 'active'"
+  ).get(box.subscription_id) as any;
+
+  if (subscription) {
+    const plan = db.prepare('SELECT * FROM plans WHERE id = ?').get(subscription.plan_id) as any;
+
+    const nextMonthBoxExists = db.prepare(`
+      SELECT id FROM boxes 
+      WHERE subscription_id = ? AND status = 'pending'
+      AND id != ?
+      LIMIT 1
+    `).get(box.subscription_id, id);
+
+    if (!nextMonthBoxExists) {
+      generateSmartBox(subscription.id, box.user_id, plan.snacks_count);
+    }
+
+    const nextShipDate = new Date();
+    nextShipDate.setMonth(nextShipDate.getMonth() + 1);
+    nextShipDate.setDate(5);
+    db.prepare(
+      'UPDATE subscriptions SET next_ship_date = ? WHERE id = ?'
+    ).run(nextShipDate.toISOString(), subscription.id);
+  }
 
   const updated = db.prepare('SELECT * FROM boxes WHERE id = ?').get(id);
   res.json(updated);
